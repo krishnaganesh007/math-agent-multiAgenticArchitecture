@@ -4,8 +4,6 @@ Manages the agent loop and coordinates between layers
 """
 
 import asyncio
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from rich.console import Console
 from rich.panel import Panel
 
@@ -33,10 +31,12 @@ async def main():
     perception = PerceptionLayer()
     memory = MemoryLayer(memory_file="user_memory.json")
     decision = DecisionLayer()
+    action = ActionLayer()  # No MCP server needed!
     
     console.print("✓ Perception layer ready")
     console.print("✓ Memory layer ready")
     console.print("✓ Decision layer ready")
+    console.print("✓ Action layer ready")
     
     # STEP 1: Collect user preferences (BEFORE agentic flow)
     console.print("\n[bold yellow]═══ PREFERENCE COLLECTION PHASE ═══[/bold yellow]")
@@ -59,126 +59,112 @@ async def main():
         border_style="green"
     ))
     
-    # STEP 2: Start MCP server for action layer
-    server_params = StdioServerParameters(
-        command="python",
-        args=["tools.py"]  # Your tools file
-    )
+    # STEP 2: Get user problem
+    console.print("\n[bold yellow]═══ AGENTIC FLOW STARTS ═══[/bold yellow]\n")
     
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            console.print("✓ Action layer ready (MCP tools connected)\n")
+    problem = input("Enter integration problem (or press Enter for default): ").strip()
+    if not problem:
+        problem = "∫4x^6 - 2x^3 + 7x - 4 dx"
+    
+    console.print(Panel(f"[bold]{problem}[/bold]", title="Problem", border_style="cyan"))
+    
+    # STEP 3: PERCEPTION (called once)
+    console.print("\n[blue]→ PERCEPTION LAYER[/blue]")
+    perceived: PerceivedQuery = await perception.perceive(problem)
+    
+    console.print(f"  Problem Type: {perceived.problem_type}")
+    console.print(f"  Expression: {perceived.expression}")
+    console.print(f"  Features: {perceived.key_features}")
+    
+    # STEP 4: MEMORY (called once to get context)
+    console.print("\n[blue]→ MEMORY LAYER[/blue]")
+    memory.update_session(
+        current_problem=problem,
+        iteration_count=0
+    )
+    memory_context: MemoryContext = memory.get_context()
+    console.print(f"  Loaded preferences for {memory_context.preferences.name}")
+    
+    # STEP 5: DECISION-ACTION LOOP
+    console.print("\n[blue]→ DECISION-ACTION LOOP[/blue]")
+    
+    max_iterations = 25
+    iteration = 0
+    tool_result_text = None
+    
+    while iteration < max_iterations:
+        iteration += 1
+        memory.update_session(iteration_count=iteration)
+        
+        console.print(f"\n[dim]--- Iteration {iteration} ---[/dim]")
+        
+        # DECISION
+        console.print("[blue]  Decision Layer:[/blue] Planning next action...")
+        decision_output: DecisionOutput = await decision.decide(
+            perceived=perceived,
+            memory=memory.get_context(),
+            tool_result=tool_result_text
+        )
+        
+        # Display reasoning if user prefers
+        if memory.preferences.show_reasoning and decision_output.reasoning_steps:
+            for step in decision_output.reasoning_steps:
+                console.print(f"    [dim]{step}[/dim]")
+        
+        # Handle decision
+        if decision_output.action_type == "final_answer":
+            console.print(Panel(
+                f"[bold green]{decision_output.final_answer}[/bold green]",
+                title="✓ Final Answer",
+                border_style="green"
+            ))
+            break
+        
+        elif decision_output.action_type == "tool_call":
+            tool_call = decision_output.tool_call
+            console.print(f"[blue]  Action Layer:[/blue] Executing {tool_call.tool_name}")
+            console.print(f"    [dim]Reason: {tool_call.reasoning}[/dim]")
             
-            action = ActionLayer(mcp_session=session)
+            # ACTION (synchronous now, no await needed)
+            action_result: ActionResult = action.execute(tool_call)
             
-            # STEP 3: Get user problem
-            console.print("[bold yellow]═══ AGENTIC FLOW STARTS ═══[/bold yellow]\n")
-            
-            # Example problems - you can make this interactive
-            problem = input("Enter integration problem (or press Enter for default): ").strip()
-            if not problem:
-                problem = "∫4x^6 - 2x^3 + 7x - 4 dx"
-            
-            console.print(Panel(f"[bold]{problem}[/bold]", title="Problem", border_style="cyan"))
-            
-            # STEP 4: PERCEPTION (called once)
-            console.print("\n[blue]→ PERCEPTION LAYER[/blue]")
-            perceived: PerceivedQuery = await perception.perceive(problem)
-            
-            console.print(f"  Problem Type: {perceived.problem_type}")
-            console.print(f"  Expression: {perceived.expression}")
-            console.print(f"  Features: {perceived.key_features}")
-            
-            # STEP 5: MEMORY (called once to get context)
-            console.print("\n[blue]→ MEMORY LAYER[/blue]")
-            memory.update_session(
-                current_problem=problem,
-                iteration_count=0
-            )
-            memory_context: MemoryContext = memory.get_context()
-            console.print(f"  Loaded preferences for {memory_context.preferences.name}")
-            
-            # STEP 6: DECISION-ACTION LOOP
-            console.print("\n[blue]→ DECISION-ACTION LOOP[/blue]")
-            
-            max_iterations = 25
-            iteration = 0
-            tool_result_text = None
-            
-            while iteration < max_iterations:
-                iteration += 1
-                memory.update_session(iteration_count=iteration)
+            if action_result.success:
+                console.print(f"    [green]✓ Success[/green]")
                 
-                console.print(f"\n[dim]--- Iteration {iteration} ---[/dim]")
+                # Update memory with results
+                if tool_call.tool_name == "parse_polynomial":
+                    memory.update_session(parsed_terms=action_result.result.get("terms"))
+                elif tool_call.tool_name == "integrate_term":
+                    memory.session.integrated_terms.append(action_result.result)
+                elif tool_call.tool_name == "differentiate_term":
+                    memory.session.differentiated_terms.append(action_result.result)
                 
-                # DECISION
-                console.print("[blue]  Decision Layer:[/blue] Planning next action...")
-                decision_output: DecisionOutput = await decision.decide(
-                    perceived=perceived,
-                    memory=memory.get_context(),
-                    tool_result=tool_result_text
-                )
-                
-                # Display reasoning if user prefers
-                if memory.preferences.show_reasoning and decision_output.reasoning_steps:
-                    for step in decision_output.reasoning_steps:
-                        console.print(f"    [dim]{step}[/dim]")
-                
-                # Handle decision
-                if decision_output.action_type == "final_answer":
-                    console.print(Panel(
-                        f"[bold green]{decision_output.final_answer}[/bold green]",
-                        title="✓ Final Answer",
-                        border_style="green"
-                    ))
-                    break
-                
-                elif decision_output.action_type == "tool_call":
-                    tool_call = decision_output.tool_call
-                    console.print(f"[blue]  Action Layer:[/blue] Executing {tool_call.tool_name}")
-                    console.print(f"    [dim]Reason: {tool_call.reasoning}[/dim]")
-                    
-                    # ACTION
-                    action_result: ActionResult = await action.execute(tool_call)
-                    
-                    if action_result.success:
-                        console.print(f"    [green]✓ Success[/green]")
-                        
-                        # Update memory with results
-                        if tool_call.tool_name == "parse_polynomial":
-                            memory.update_session(parsed_terms=action_result.result)
-                        elif tool_call.tool_name == "integrate_term":
-                            memory.session.integrated_terms.append(action_result.result)
-                        elif tool_call.tool_name == "differentiate_term":
-                            memory.session.differentiated_terms.append(action_result.result)
-                        
-                        # Add to history
-                        memory.add_to_history({
-                            "iteration": iteration,
-                            "tool": tool_call.tool_name,
-                            "result": action_result.result
-                        })
-                    else:
-                        console.print(f"    [red]✗ Failed: {action_result.error_message}[/red]")
-                    
-                    # Format result for next decision
-                    tool_result_text = action.format_result_for_decision(action_result)
-                
-                elif decision_output.action_type == "error":
-                    console.print(f"[red]Error: {decision_output.error_message}[/red]")
-                    break
-                
-                if not decision_output.should_continue:
-                    break
+                # Add to history
+                memory.add_to_history({
+                    "iteration": iteration,
+                    "tool": tool_call.tool_name,
+                    "result": action_result.result
+                })
+            else:
+                console.print(f"    [red]✗ Failed: {action_result.error_message}[/red]")
             
-            if iteration >= max_iterations:
-                console.print("[red]Warning: Max iterations reached[/red]")
-            
-            console.print(f"\n[green]✓ Agent completed in {iteration} iterations[/green]")
-            
-            # Save session to memory
-            memory.save_preferences()
+            # Format result for next decision
+            tool_result_text = action.format_result_for_decision(action_result)
+        
+        elif decision_output.action_type == "error":
+            console.print(f"[red]Error: {decision_output.error_message}[/red]")
+            break
+        
+        if not decision_output.should_continue:
+            break
+    
+    if iteration >= max_iterations:
+        console.print("[red]Warning: Max iterations reached[/red]")
+    
+    console.print(f"\n[green]✓ Agent completed in {iteration} iterations[/green]")
+    
+    # Save session to memory
+    memory.save_preferences()
 
 
 if __name__ == "__main__":
