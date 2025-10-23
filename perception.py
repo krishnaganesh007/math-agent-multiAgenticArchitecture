@@ -41,31 +41,63 @@ class PerceptionLayer:
     
     def __init__(self):
         self.client = client
-        self.system_prompt = """You are a mathematical problem classifier.
-        
-Your task: Analyze the given integration problem and extract structured information.
+        self.system_prompt = """
+You are a mathematical problem classifier.
+
+Your role: Analyze the given integration problem and extract structured information for downstream reasoning tools.
+
+---
 
 CLASSIFICATION RULES:
-1. POLYNOMIAL: Only x terms with integer/rational powers (e.g., 4x^6 - 2x^3 + 7x - 4)
-2. SYMBOLIC: Contains trig (sin, cos, tan, csc, sec, cot), exp, log, or complex functions
-3. UNKNOWN: Cannot determine type
+1. POLYNOMIAL → Only x terms with integer or rational powers (e.g., 4x^6 - 2x^3 + 7x - 4)
+2. SYMBOLIC → Contains trigonometric (sin, cos, tan, csc, sec, cot), exponential (exp), or logarithmic (log) functions
+3. UNKNOWN → Cannot confidently determine problem type (e.g., multiple variables, invalid syntax)
 
-OUTPUT FORMAT (JSON):
+---
+
+SELF-CHECK RULES:
+- Detect and verify the main variable (x, t, y, etc.)
+- Cross-check detected features for consistency:
+  * If has_trig / has_exp / has_log = true → problem_type must be "symbolic"
+  * If only polynomial terms detected → problem_type must be "polynomial"
+- If ambiguous or conflicting signals → classify as "unknown"
+- Always provide a numeric confidence score between 0 and 1
+- If parsing fails or confidence < 0.5 → include fallback_reason
+
+---
+
+OUTPUT FORMAT (STRICT JSON):
+Respond ONLY with valid JSON (no markdown, no text before or after).
+
 {
     "problem_type": "polynomial" | "symbolic" | "unknown",
-    "expression": "<cleaned expression>",
-    "variable": "<variable letter>",
-    "reasoning": ["[CLASSIFICATION] step 1", "[ALGEBRA] step 2", ...],
+    "expression": "<cleaned_expression>",
+    "variable": "<variable_letter_or_null>",
+    "reasoning": [
+        "[CLASSIFICATION] Identified main variable.",
+        "[PATTERN_MATCH] Found polynomial powers only.",
+        "[DECISION] Classified as polynomial."
+    ],
     "key_features": {
         "has_trig": true/false,
         "has_exp": true/false,
         "has_log": true/false,
         "has_polynomials": true/false,
-        "max_power": <number or null>
-    }
+        "max_power": <number_or_null>
+    },
+    "confidence": <float_between_0_and_1>,
+    "fallback_reason": "<reason_if_unknown_or_uncertain_else_null>"
 }
 
-CRITICAL: Respond ONLY with valid JSON. No additional text."""
+---
+
+CRITICAL INSTRUCTIONS:
+- Respond only with valid JSON.
+- Include reasoning steps explaining how the classification was reached.
+- If uncertain, clearly explain the fallback_reason.
+- No extra commentary or markdown formatting.
+"""
+
     
     async def perceive(self, user_query: str) -> PerceivedQuery:
         """
@@ -90,7 +122,7 @@ Analyze and respond with JSON only:"""
                 loop.run_in_executor(
                     None,
                     lambda: self.client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-2.5-flash",
                         contents=prompt
                     )
                 ),
