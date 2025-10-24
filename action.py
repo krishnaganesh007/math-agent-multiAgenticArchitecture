@@ -1,89 +1,3 @@
-# """
-# Action Layer: Executes tools based on decisions
-# Deterministic: Direct tool execution without LLM involvement
-# """
-
-# from pydantic import BaseModel, Field
-# from typing import Any, Optional
-# from mcp import ClientSession
-# from decision import ToolCall
-# import json
-
-
-# # Pydantic Models
-# class ActionResult(BaseModel):
-#     """Result of action execution"""
-#     success: bool = Field(description="Whether action succeeded")
-#     result: Any = Field(description="Tool execution result")
-#     error_message: Optional[str] = None
-#     tool_name: str = Field(description="Name of tool executed")
-
-
-# class ActionLayer:
-#     """Action cognitive layer - executes tools"""
-    
-#     def __init__(self, mcp_session: ClientSession):
-#         self.session = mcp_session
-    
-#     async def execute(self, tool_call: ToolCall) -> ActionResult:
-#         """
-#         Execute a tool call
-        
-#         Args:
-#             tool_call: ToolCall decision from decision layer
-            
-#         Returns:
-#             ActionResult with execution outcome
-#         """
-#         try:
-#             # Call MCP tool
-#             tool_result = await self.session.call_tool(
-#                 tool_call.tool_name,
-#                 arguments=tool_call.arguments
-#             )
-            
-#             # Extract result
-#             if tool_result.content:
-#                 result_text = tool_result.content[0].text
-                
-#                 # Try to parse as JSON if possible
-#                 try:
-#                     parsed_result = json.loads(result_text)
-#                     return ActionResult(
-#                         success=True,
-#                         result=parsed_result,
-#                         tool_name=tool_call.tool_name
-#                     )
-#                 except json.JSONDecodeError:
-#                     # Plain text result
-#                     return ActionResult(
-#                         success=True,
-#                         result=result_text,
-#                         tool_name=tool_call.tool_name
-#                     )
-#             else:
-#                 return ActionResult(
-#                     success=False,
-#                     result=None,
-#                     error_message="No content in tool result",
-#                     tool_name=tool_call.tool_name
-#                 )
-                
-#         except Exception as e:
-#             return ActionResult(
-#                 success=False,
-#                 result=None,
-#                 error_message=str(e),
-#                 tool_name=tool_call.tool_name
-#             )
-    
-#     def format_result_for_decision(self, action_result: ActionResult) -> str:
-#         """Format action result for passing back to decision layer"""
-#         if action_result.success:
-#             return f"Tool '{action_result.tool_name}' succeeded: {json.dumps(action_result.result, indent=2)}"
-#         else:
-#             return f"Tool '{action_result.tool_name}' failed: {action_result.error_message}"
-
 
 """
 Action Layer + MCP Tool Definitions
@@ -95,12 +9,20 @@ and returns structured ActionResult objects.
 from pydantic import BaseModel, Field
 from typing import Any, Optional
 from mcp import ClientSession
+from mcp.types import TextContent
 from mcp.server.fastmcp import FastMCP
 from rich.console import Console
 from rich.panel import Panel
 import json
 import re
 import sys
+import os
+import base64
+from email.message import EmailMessage
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 # ----------------------------------------------------------------------------
 # MCP Server Initialization
@@ -409,6 +331,95 @@ def verify_symbolic_integration(original: str, antiderivative: str, variable: st
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})
+
+
+# ----------------------------------------------------------------------------
+# PERSONALIZED GMAIL TOOL
+# ----------------------------------------------------------------------------
+
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+
+def _get_gmail_creds(
+    client_secret_path: str = "client_secret.json",
+    token_path: str = "token.json"
+) -> Credentials:
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(client_secret_path):
+                raise FileNotFoundError(f"Missing OAuth client file: {client_secret_path}")
+            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, GMAIL_SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(token_path, "w") as f:
+            f.write(creds.to_json())
+    return creds
+
+def _build_gmail_service(creds: Credentials):
+    return build("gmail", "v1", credentials=creds)
+
+def _encode_email_message(msg: EmailMessage) -> dict:
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    return {"raw": raw}
+@mcp.tool()
+def send_gmail_text_personalized(
+    to: str,
+    subject: str,
+    body: str,
+    font_style: str = "Arial",
+    font_color: str = "black",
+    signature: str = "",
+    tone: str = "professional",
+    sender: str = "me"
+) -> dict:
+    """
+    Send an email with personalized style and signature using Gmail API.
+    Respects the tone, font, color, and signature provided.
+    """
+
+    try:
+        # Build the HTML body strictly from the passed content
+        html_body = f"""
+        <p style="font-family: {font_style}; color: {font_color};">
+        {body}<br><br>
+        {signature}
+        </p>
+        """
+
+        # Compose message
+        msg = EmailMessage()
+        msg["To"] = to
+        msg["From"] = sender
+        msg["Subject"] = subject
+        msg.set_content(body)  # fallback plain text
+        msg.add_alternative(html_body, subtype="html")
+
+        # Send email
+        creds = _get_gmail_creds()
+        service = _build_gmail_service(creds)
+        resp = service.users().messages().send(
+            userId="me", body=_encode_email_message(msg)
+        ).execute()
+
+        message_id = resp.get("id")
+        success_msg = f"Email sent successfully to {to}. Message ID: {message_id}"
+        return {
+            "status": "success",
+            "message": success_msg,
+            "message_id": message_id,
+            "content": [TextContent(type="text", text=success_msg)]
+        }
+
+    except Exception as e:
+        error_msg = f"Error sending email: {e}"
+        return {
+            "status": "error",
+            "message": error_msg,
+            "content": [TextContent(type="text", text=error_msg)]
+        }
 
 
 # ----------------------------------------------------------------------------

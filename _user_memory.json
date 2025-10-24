@@ -1,0 +1,17 @@
+{
+  "name": "Ganesh",
+  "preferred_explanation_style": "stepwise",
+  "preferred_method": "manual",
+  "notation_preference": "latex",
+  "show_reasoning": true,
+  "verification_required": true,
+  "math_level": "beginner",
+  "favorite_topics": [
+    "integration"
+  ],
+  "disliked_topics": [],
+  "font_style": "Arial",
+  "font_color": "black",
+  "communication_tone": "friendly",
+  "signature": "Best regards,\nYour AI Assistant"
+}

@@ -10,3 +10,7 @@ wheels/
 .venv
 .env
 user_memory.json
+
+# Secrets
+client_secrets.json
+token.json
