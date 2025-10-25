@@ -364,6 +364,64 @@ def _build_gmail_service(creds: Credentials):
 def _encode_email_message(msg: EmailMessage) -> dict:
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
     return {"raw": raw}
+
+# @mcp.tool()
+# def send_gmail_text_personalized(
+#     to: str,
+#     subject: str,
+#     body: str,
+#     font_style: str = "Arial",
+#     font_color: str = "black",
+#     signature: str = "",
+#     tone: str = "professional",
+#     sender: str = "me"
+# ) -> dict:
+#     """
+#     Send an email with personalized style and signature using Gmail API.
+#     Respects the tone, font, color, and signature provided.
+#     """
+
+#     try:
+#         # Build the HTML body strictly from the passed content
+#         html_body = f"""
+#         <p style="font-family: {font_style}; color: {font_color};">
+#         {body}<br><br>
+#         {signature}
+#         </p>
+#         """
+
+#         # Compose message
+#         msg = EmailMessage()
+#         msg["To"] = to
+#         msg["From"] = sender
+#         msg["Subject"] = subject
+#         msg.set_content(body)  # fallback plain text
+#         msg.add_alternative(html_body, subtype="html")
+
+#         # Send email
+#         creds = _get_gmail_creds()
+#         service = _build_gmail_service(creds)
+#         resp = service.users().messages().send(
+#             userId="me", body=_encode_email_message(msg)
+#         ).execute()
+
+#         message_id = resp.get("id")
+#         success_msg = f"Email sent successfully to {to}. Message ID: {message_id}"
+#         return {
+#             "status": "success",
+#             "message": success_msg,
+#             "message_id": message_id,
+#             "content": [TextContent(type="text", text=success_msg)]
+#         }
+
+#     except Exception as e:
+#         error_msg = f"Error sending email: {e}"
+#         return {
+#             "status": "error",
+#             "message": error_msg,
+#             "content": [TextContent(type="text", text=error_msg)]
+#         }
+
 @mcp.tool()
 def send_gmail_text_personalized(
     to: str,
@@ -376,17 +434,41 @@ def send_gmail_text_personalized(
     sender: str = "me"
 ) -> dict:
     """
-    Send an email with personalized style and signature using Gmail API.
-    Respects the tone, font, color, and signature provided.
+    Send an email with the LLM-drafted content, applying user's styling preferences.
+    
+    Args:
+        to: Recipient email
+        subject: Email subject (already drafted by LLM)
+        body: Email body with HTML (already drafted by LLM, may contain styled sections)
+        font_style: User's preferred font family
+        font_color: User's preferred text color
+        signature: User's signature block
+        tone: Communication tone (informational only)
     """
 
     try:
-        # Build the HTML body strictly from the passed content
+        # Format signature with proper line breaks
+        signature_formatted = signature.replace("\\n", "<br>").replace("\n", "<br>")
+        
+        # Wrap the LLM-drafted body with user's styling preferences
         html_body = f"""
-        <p style="font-family: {font_style}; color: {font_color};">
-        {body}<br><br>
-        {signature}
-        </p>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: {font_style}; color: {font_color}; line-height: 1.6; }}
+                .content {{ max-width: 600px; margin: 0 auto; }}
+                .signature {{ margin-top: 30px; color: #666; font-style: italic; }}
+            </style>
+        </head>
+        <body>
+            <div class="content">
+                {body}
+                <div class="signature">
+                    {signature_formatted}
+                </div>
+            </div>
+        </body>
+        </html>
         """
 
         # Compose message
@@ -394,7 +476,13 @@ def send_gmail_text_personalized(
         msg["To"] = to
         msg["From"] = sender
         msg["Subject"] = subject
-        msg.set_content(body)  # fallback plain text
+        
+        # Plain text fallback (strip HTML tags)
+        import re
+        plain_text = re.sub('<[^<]+?>', '', body) + "\n\n" + signature.replace("\\n", "\n")
+        msg.set_content(plain_text)
+        
+        # Add HTML version
         msg.add_alternative(html_body, subtype="html")
 
         # Send email
@@ -406,6 +494,8 @@ def send_gmail_text_personalized(
 
         message_id = resp.get("id")
         success_msg = f"Email sent successfully to {to}. Message ID: {message_id}"
+        console.print(f"[green]{success_msg}[/green]")
+        
         return {
             "status": "success",
             "message": success_msg,
@@ -415,11 +505,13 @@ def send_gmail_text_personalized(
 
     except Exception as e:
         error_msg = f"Error sending email: {e}"
+        console.print(f"[red]{error_msg}[/red]")
         return {
             "status": "error",
             "message": error_msg,
             "content": [TextContent(type="text", text=error_msg)]
         }
+
 
 
 # ----------------------------------------------------------------------------

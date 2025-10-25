@@ -12,6 +12,6 @@ wheels/
 user_memory.json
 
 # Secrets
-client_secret.json
+./client_secret.json
 token.json
 client_secret.json

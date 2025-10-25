@@ -508,6 +508,23 @@ async def main():
             console.print(f"  Expression: {perceived.expression}")
             console.print(f"  Features: {perceived.key_features}")
 
+            # ✨ NEW: Display email instructions if detected
+            if perceived.email_instruction:
+                email_inst = perceived.email_instruction
+                console.print("\n[magenta]  📧 EMAIL INSTRUCTIONS DETECTED:[/magenta]")
+                console.print(Panel(
+                    f"[bold]Recipient:[/bold] {email_inst.recipient}\n"
+                    f"[bold]Subject:[/bold] {email_inst.subject or 'Not specified (will be auto-generated)'}\n"
+                    f"[bold]Body Template:[/bold] {email_inst.body_template or 'Not specified (will detail steps)'}\n"
+                    f"[bold]Signature:[/bold] {email_inst.signature or 'Using default from memory'}\n"
+                    f"[bold]Font Style:[/bold] {email_inst.font_style or 'Using preference: ' + prefs.font_style}\n"
+                    f"[bold]Font Color:[/bold] {email_inst.font_color or 'Using preference: ' + prefs.font_color}",
+                    title="Email Configuration",
+                    border_style="magenta"
+                ))
+            else:
+                console.print("  [dim]No email instructions detected[/dim]")
+
             # Detect email instructions
             send_email = False
             recipient_email = None
@@ -572,6 +589,50 @@ async def main():
                         console.print(f"    [dim]{step}[/dim]")
 
                 # Handle decision
+                # if decision_output.action_type == "final_answer":
+                #     final_ans = decision_output.final_answer
+                #     console.print(Panel(
+                #         f"[bold green]{final_ans}[/bold green]",
+                #         title="✓ Final Answer",
+                #         border_style="green"
+                #     ))
+
+                #     # Send email if required
+                #     if send_email and recipient_email:
+                #         console.print(f"[magenta]Sending final answer to {recipient_email}...[/magenta]")
+
+                #         # Safely get preferences from memory
+                #         email_subject = getattr(memory_context.preferences, "email_subject", "Integration Result")
+                #         email_font_style = getattr(memory_context.preferences, "font_style", "serif")
+                #         email_font_color = getattr(memory_context.preferences, "font_color", "black")
+                #         email_signature = getattr(memory_context.preferences, "signature", "Yours smartly,\nMath Agent")
+                #         email_tone = getattr(memory_context.preferences, "communication_tone", "neutral")
+
+                #         # Ensure all are strings
+                #         email_subject = str(email_subject)
+                #         email_font_style = str(email_font_style)
+                #         email_font_color = str(email_font_color)
+                #         email_signature = str(email_signature)
+                #         email_tone = str(email_tone)
+
+                #         # Call Gmail tool
+                #         email_result = await action.session.call_tool(
+                #             "send_gmail_text_personalized",
+                #             arguments={
+                #                 "to": recipient_email,
+                #                 "subject": email_subject,
+                #                 "body": final_ans,
+                #                 "font_style": email_font_style,
+                #                 "font_color": email_font_color,
+                #                 "signature": email_signature,
+                #                 "tone": email_tone
+                #             }
+                #         )
+
+                #         if email_result.content and email_result.content[0].text:
+                #             console.print(f"[magenta]{email_result.content[0].text}[/magenta]")
+                # In main.py, replace the email sending section:
+
                 if decision_output.action_type == "final_answer":
                     final_ans = decision_output.final_answer
                     console.print(Panel(
@@ -582,39 +643,42 @@ async def main():
 
                     # Send email if required
                     if send_email and recipient_email:
-                        console.print(f"[magenta]Sending final answer to {recipient_email}...[/magenta]")
-
-                        # Safely get preferences from memory
-                        email_subject = getattr(memory_context.preferences, "email_subject", "Integration Result")
-                        email_font_style = getattr(memory_context.preferences, "font_style", "serif")
-                        email_font_color = getattr(memory_context.preferences, "font_color", "black")
-                        email_signature = getattr(memory_context.preferences, "signature", "Yours smartly,\nMath Agent")
-                        email_tone = getattr(memory_context.preferences, "communication_tone", "neutral")
-
-                        # Ensure all are strings
-                        email_subject = str(email_subject)
-                        email_font_style = str(email_font_style)
-                        email_font_color = str(email_font_color)
-                        email_signature = str(email_signature)
-                        email_tone = str(email_tone)
-
-                        # Call Gmail tool
+                        console.print(f"[magenta]Drafting email using LLM...[/magenta]")
+                        
+                        # Use Decision Layer to draft email content
+                        email_draft = await decision.draft_email_content(
+                            perceived=perceived,
+                            memory=memory.get_context(),
+                            final_answer=final_ans
+                        )
+                        
+                        console.print(f"[magenta]Sending to {recipient_email}...[/magenta]")
+                        
+                        # Get styling preferences
+                        font_style = memory.preferences.font_style
+                        font_color = memory.preferences.font_color
+                        signature = memory.preferences.signature
+                        tone = memory.preferences.communication_tone
+                        
+                        # Send email with drafted content + styling
                         email_result = await action.session.call_tool(
                             "send_gmail_text_personalized",
                             arguments={
                                 "to": recipient_email,
-                                "subject": email_subject,
-                                "body": final_ans,
-                                "font_style": email_font_style,
-                                "font_color": email_font_color,
-                                "signature": email_signature,
-                                "tone": email_tone
+                                "subject": email_draft["subject"],
+                                "body": email_draft["body"],
+                                "font_style": font_style,
+                                "font_color": font_color,
+                                "signature": signature,
+                                "tone": tone
                             }
                         )
-
+                        
+                        # ✅ CORRECT
                         if email_result.content and email_result.content[0].text:
-                            console.print(f"[magenta]{email_result.content[0].text}[/magenta]")
+                            console.print(f"[green]✓ {email_result.content[0].text}[/green]")
 
+                    
                     break
 
 
