@@ -125,7 +125,7 @@ USER: ∫4x^6 - 2x^3 + 7x - 4 dx
 
 - User query: "solve the integral of  7x−4dx and send the answer to ytscientist.krishna@gmail.com"
 - Output:
-
+```
 ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Mathematical Reasoning Agent                                                                                                                                                                                  │
 │ Four-Layer Cognitive Architecture                                                                                                                                                                             │
